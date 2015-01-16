@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
  *  copy of this software and associated documentation files (the "Software"),
@@ -46,7 +46,7 @@ struct IDownloadSink
     /**
        Inform the sink of detected filename
      */
-    virtual void SetFilename(const std::string& filename) = 0;
+    virtual void SetFilename(const std::wstring& filename) = 0;
 
     /// Add chunk of downloaded data
     virtual void Add(const void *data, size_t len) = 0;
@@ -59,7 +59,7 @@ struct StringDownloadSink : public IDownloadSink
 {
     virtual void SetLength(size_t) {}
 
-    virtual void SetFilename(const std::string& filename) {}
+    virtual void SetFilename(const std::wstring&) {}
 
     virtual void Add(const void *data, size_t len)
     {

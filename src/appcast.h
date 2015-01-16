@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
  *  copy of this software and associated documentation files (the "Software"),
@@ -46,26 +46,38 @@ struct Appcast
     /// URL of the release notes page
     std::string ReleaseNotesURL;
 
+    /// URL to launch in web browser (instead of downloading update ourselves)
+    std::string WebBrowserURL;
+
     /// Title of the update
     std::string Title;
 
     /// Description of the update
     std::string Description;
 
-	// Operating system
-	std::string Os;
+    // Operating system
+    std::string Os;
 
     /**
         Initializes the struct with data from XML appcast feed.
 
         If the feed contains multiple entries, only the latest one is read,
-        the rest is ignored.
+        the rest is ignored. Entries that are not appliable (e.g. for different
+        OS) are likewise skipped.
 
         Throws on error.
+        Returns NULL if no error ocurred, but there was no update in the appcast.
 
         @param xml Appcast feed data.
      */
-    void Load(const std::string& xml);
+    static Appcast Load(const std::string& xml);
+
+    /// Returns true if the struct constains valid data.
+    bool IsValid() const { return !Version.empty(); }
+
+    /// If true, then download and install the update ourselves.
+    /// If false, launch a web browser to WebBrowserURL.
+    bool HasDownload() const { return !DownloadURL.empty(); }
 };
 
 } // namespace winsparkle

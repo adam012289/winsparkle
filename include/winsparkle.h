@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
  *  copy of this software and associated documentation files (the "Software"),
@@ -213,6 +213,14 @@ WIN_SPARKLE_API void __cdecl win_sparkle_set_update_check_interval(int interval)
  */
 WIN_SPARKLE_API int __cdecl win_sparkle_get_update_check_interval();
 
+/**
+    Gets the time for the last update check.
+
+    Default value is -1, indicating that the update check has never run.
+
+    @since 0.4
+*/
+WIN_SPARKLE_API time_t __cdecl win_sparkle_get_last_check_time();
 
 /// Callback type for win_sparkle_can_shutdown_callback()
 typedef int (__cdecl *win_sparkle_can_shutdown_callback_t)();
@@ -225,7 +233,7 @@ typedef int (__cdecl *win_sparkle_can_shutdown_callback_t)();
     the host application can be safely shut down or FALSE if not (e.g. because
     the user has unsaved documents).
 
-    @note There's no guaranteed about the thread from which the callback is called,
+    @note There's no guarantee about the thread from which the callback is called,
           except that it certainly *won't* be called from the app's main thread.
           Make sure the callback is thread-safe.
 
@@ -243,10 +251,13 @@ typedef void (__cdecl *win_sparkle_shutdown_request_callback_t)();
     Set callback for shutting down the application.
 
     This callback will be called to ask the host to shut down immediately after
-    launching the installer. It will only be called if the call to the callback
-    set with win_sparkle_set_can_shutdown_callback() returned TRUE.
+    launching the installer. Its implementation should gracefully terminate the
+    application.
 
-    @note There's no guaranteed about the thread from which the callback is called,
+    It will only be called if the call to the callback set with
+    win_sparkle_set_can_shutdown_callback() returns TRUE.
+
+    @note There's no guarantee about the thread from which the callback is called,
           except that it certainly *won't* be called from the app's main thread.
           Make sure the callback is thread-safe.
 

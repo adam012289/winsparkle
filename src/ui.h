@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
  *  copy of this software and associated documentation files (the "Software"),
@@ -86,7 +86,7 @@ public:
     /**
         Notifies the UI that an update was downloaded.
      */
-    static void NotifyUpdateDownloaded(const std::string& updateFile);
+    static void NotifyUpdateDownloaded(const std::wstring& updateFile);
 
     /**
         Shows the WinSparkle window in "checking for updates..." state.
@@ -104,6 +104,8 @@ public:
         Must be called on DLL initialization.
      */
     static void SetDllHINSTANCE(HINSTANCE h) { ms_hInstance = h; }
+
+    static HINSTANCE GetDllHINSTANCE() { return ms_hInstance; }
 
 protected:
     virtual void Run();

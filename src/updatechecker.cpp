@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *  Copyright (C) 2007 Andy Matuschak
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
@@ -232,8 +232,7 @@ void UpdateChecker::Run()
         StringDownloadSink appcast_xml;
         DownloadFile(url, &appcast_xml, GetAppcastDownloadFlags());
 
-        Appcast appcast;
-        appcast.Load(appcast_xml.data);
+        Appcast appcast = Appcast::Load(appcast_xml.data);
 
         Settings::WriteConfigValue("LastCheckTime", time(NULL));
 
@@ -241,7 +240,7 @@ void UpdateChecker::Run()
                 WideToAnsi(Settings::GetAppBuildVersion());
 
         // Check if our version is out of date.
-        if ( CompareVersions(currentVersion, appcast.Version) >= 0 )
+        if ( !appcast.IsValid() || CompareVersions(currentVersion, appcast.Version) >= 0 )
         {
             // The same or newer version is already installed.
             UI::NotifyNoUpdates();

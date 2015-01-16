@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
  *  copy of this software and associated documentation files (the "Software"),
@@ -102,10 +102,11 @@ bool GetHttpHeader(HINTERNET handle, DWORD whatToGet, DWORD& output)
            ) == TRUE;
 }
 
-std::string GetURLFileName(const URL_COMPONENTSA& urlc)
+std::wstring GetURLFileName(const URL_COMPONENTSA& urlc)
 {
     const char *lastSlash = strrchr(urlc.lpszUrlPath, '/');
-    return std::string(lastSlash ? lastSlash + 1 : urlc.lpszUrlPath);
+    const std::string fn(lastSlash ? lastSlash + 1 : urlc.lpszUrlPath);
+    return AnsiToWide(fn);
 }
 
 } // anonymous namespace
@@ -201,8 +202,7 @@ void DownloadFile(const std::string& url, IDownloadSink *sink, int flags)
             else
                 *ptr2 = 0;
 
-            std::string filename( c_filename );
-            sink->SetFilename(filename);
+            sink->SetFilename(AnsiToWide(c_filename));
             filename_set = true;
         }
     }

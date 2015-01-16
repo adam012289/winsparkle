@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
  *  copy of this software and associated documentation files (the "Software"),
@@ -204,6 +204,21 @@ WIN_SPARKLE_API int __cdecl win_sparkle_get_update_check_interval()
     return DEFAULT_CHECK_INTERVAL;
 }
 
+WIN_SPARKLE_API time_t __cdecl win_sparkle_get_last_check_time()
+{
+    static const time_t DEFAULT_LAST_CHECK_TIME = -1;
+
+    try
+    {
+        time_t last_check;
+        Settings::ReadConfigValue("LastCheckTime", last_check, DEFAULT_LAST_CHECK_TIME);
+        return last_check;
+    }
+    CATCH_ALL_EXCEPTIONS
+
+    return DEFAULT_LAST_CHECK_TIME;
+}
+
 WIN_SPARKLE_API void __cdecl win_sparkle_set_can_shutdown_callback(win_sparkle_can_shutdown_callback_t callback)
 {
     try
@@ -246,7 +261,7 @@ WIN_SPARKLE_API void __cdecl win_sparkle_check_update_without_ui()
     {
         // Run the check in background. Only show UI if updates
         // are available.
-        UpdateChecker *check = new ManualUpdateChecker();
+        UpdateChecker *check = new UpdateChecker();
         check->Start();
     }
     CATCH_ALL_EXCEPTIONS

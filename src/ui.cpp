@@ -1,7 +1,7 @@
 /*
  *  This file is part of WinSparkle (http://winsparkle.org)
  *
- *  Copyright (C) 2009-2013 Vaclav Slavik
+ *  Copyright (C) 2009-2015 Vaclav Slavik
  *
  *  Permission is hereby granted, free of charge, to any person obtaining a
  *  copy of this software and associated documentation files (the "Software"),
@@ -38,7 +38,9 @@
 #include <wx/setup.h>
 
 #include <wx/app.h>
+#include <wx/dcclient.h>
 #include <wx/dialog.h>
+#include <wx/evtloop.h>
 #include <wx/sizer.h>
 #include <wx/button.h>
 #include <wx/filename.h>
@@ -103,6 +105,36 @@ void DoShowElement(wxSizer *s, bool show)
 #define SHOW(c)    DoShowElement(c, true)
 #define HIDE(c)    DoShowElement(c, false)
 
+wxIcon LoadNamedIcon(HMODULE module, const wchar_t *iconName, int size)
+{
+    HICON hIcon = NULL;
+
+    typedef HRESULT(WINAPI *LPFN_LOADICONWITHSCALEDOWN)(HINSTANCE, PCWSTR, int, int, HICON*);
+    LPFN_LOADICONWITHSCALEDOWN f_LoadIconWithScaleDown =
+        (LPFN_LOADICONWITHSCALEDOWN) GetProcAddress(GetModuleHandleA("comctl32"), "LoadIconWithScaleDown");
+
+    if (f_LoadIconWithScaleDown)
+    {
+        if (FAILED(f_LoadIconWithScaleDown(module, iconName, size, size, &hIcon)))
+            hIcon = NULL;
+    }
+
+    if (!hIcon)
+    {
+        hIcon = static_cast<HICON>(LoadImage(module, iconName, IMAGE_ICON, size, size, LR_DEFAULTCOLOR));
+    }
+
+    if (!hIcon)
+        return wxNullIcon;
+
+    wxIcon icon;
+    icon.SetHICON(static_cast<WXHICON>(hIcon));
+    icon.SetWidth(size);
+    icon.SetHeight(size);
+
+    return icon;
+}
+
 BOOL CALLBACK GetFirstIconProc(HMODULE hModule, LPCTSTR lpszType, LPTSTR lpszName, LONG_PTR lParam)
 {
     if (IS_INTRESOURCE(lpszName))
@@ -112,7 +144,7 @@ BOOL CALLBACK GetFirstIconProc(HMODULE hModule, LPCTSTR lpszType, LPTSTR lpszNam
     return FALSE; // stop on the first icon found
 }
 
-wxIcon GetApplicationIcon()
+wxIcon GetApplicationIcon(int size)
 {
     HMODULE hParentExe = GetModuleHandle(NULL);
     if ( !hParentExe )
@@ -124,18 +156,10 @@ wxIcon GetApplicationIcon()
     if ( GetLastError() != ERROR_SUCCESS && GetLastError() != ERROR_RESOURCE_ENUM_USER_STOP )
         return wxNullIcon;
 
-    HANDLE hIcon = LoadImage(hParentExe, iconName, IMAGE_ICON, 48, 48, LR_DEFAULTCOLOR);
+    wxIcon icon = LoadNamedIcon(hParentExe, iconName, size);
 
     if ( !IS_INTRESOURCE(iconName) )
         free(iconName);
-
-    if ( !hIcon )
-        return wxNullIcon;
-
-    wxIcon icon;
-    icon.SetHICON(static_cast<WXHICON>(hIcon));
-    icon.SetWidth(48);
-    icon.SetHeight(48);
 
     return icon;
 }
@@ -143,11 +167,63 @@ wxIcon GetApplicationIcon()
 
 struct EventPayload
 {
-    Appcast     appcast;
-    size_t      sizeDownloaded, sizeTotal;
-    std::string updateFile;
+    Appcast      appcast;
+    size_t       sizeDownloaded, sizeTotal;
+    std::wstring updateFile;
 };
 
+
+struct EnumProcessWindowsData
+{
+    DWORD process_id;
+    wxRect biggest;
+};
+
+BOOL CALLBACK EnumProcessWindowsCallback(HWND handle, LPARAM lParam)
+{
+    EnumProcessWindowsData& data = *reinterpret_cast<EnumProcessWindowsData*>(lParam);
+
+    if (!IsWindowVisible(handle))
+        return TRUE;
+
+    DWORD process_id = 0;
+    GetWindowThreadProcessId(handle, &process_id);
+    if (data.process_id != process_id)
+        return TRUE; // another process' window
+
+    if (GetWindow(handle, GW_OWNER) != 0)
+        return TRUE; // child, not main, window
+
+    RECT rwin;
+    GetWindowRect(handle, &rwin);
+    wxRect r(rwin.left, rwin.top, rwin.right - rwin.left, rwin.bottom - rwin.top);
+    if (r.width * r.height > data.biggest.width * data.biggest.height)
+        data.biggest = r;
+
+    return TRUE;
+}
+
+wxRect GetHostApplicationScreenArea()
+{
+    EnumProcessWindowsData data;
+    data.process_id = GetCurrentProcessId();
+    EnumWindows(EnumProcessWindowsCallback, (LPARAM)&data);
+    return data.biggest;
+}
+
+void CenterWindowOnHostApplication(wxTopLevelWindow *win)
+{
+    // find application's biggest window:
+    EnumProcessWindowsData data;
+    data.process_id = GetCurrentProcessId();
+    EnumWindows(EnumProcessWindowsCallback, (LPARAM) &data);
+
+    // and center WinSparkle on it:
+    wxSize winsz = win->GetClientSize();
+    wxPoint pos(data.biggest.x + (data.biggest.width - winsz.x) / 2,
+                data.biggest.y + (data.biggest.height - winsz.y) / 2);
+    win->Move(pos);
+}
 
 } // anonymous namespace
 
@@ -172,6 +248,10 @@ protected:
     // sizer for the main area of the dialog (to the right of the icon)
     wxSizer      *m_mainAreaSizer;
 
+    // High DPI support:
+    double        m_scaleFactor;
+    #define PX(x) (int((x) * m_scaleFactor))
+
     static const int MESSAGE_AREA_WIDTH = 300;
 };
 
@@ -181,24 +261,27 @@ WinSparkleDialog::WinSparkleDialog()
                wxDefaultPosition, wxDefaultSize,
                wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER)
 {
-    SetIcons(wxICON(UpdateAvailable));
+    wxSize dpi = wxClientDC(this).GetPPI();
+    m_scaleFactor = dpi.y / 96.0;
+
+    SetIcon(LoadNamedIcon(UI::GetDllHINSTANCE(), L"UpdateAvailable", GetSystemMetrics(SM_CXSMICON)));
 
     wxSizer *topSizer = new wxBoxSizer(wxHORIZONTAL);
 
     // Load the dialog box icon: the first 48x48 application icon will be loaded, if available,
     // otherwise, the standard WinSparkle icon will be used.
-    wxIcon bigIcon = GetApplicationIcon();
+    wxIcon bigIcon = GetApplicationIcon(PX(48));
     if ( !bigIcon.IsOk() )
-        bigIcon.LoadFile("UpdateAvailable", wxBITMAP_TYPE_ICO_RESOURCE, 48, 48);
+        bigIcon = LoadNamedIcon(UI::GetDllHINSTANCE(), L"UpdateAvailable", PX(48));
 
     topSizer->Add
               (
                   new wxStaticBitmap(this, wxID_ANY, bigIcon),
-                  wxSizerFlags(0).Border(wxALL, 10)
+                  wxSizerFlags(0).Border(wxALL, PX(10))
               );
 
     m_mainAreaSizer = new wxBoxSizer(wxVERTICAL);
-    topSizer->Add(m_mainAreaSizer, wxSizerFlags(1).Expand().Border(wxALL, 10));
+    topSizer->Add(m_mainAreaSizer, wxSizerFlags(1).Expand().Border(wxALL, PX(10)));
 
     SetSizer(topSizer);
 
@@ -283,7 +366,7 @@ public:
     // update download progress
     void DownloadProgress(size_t downloaded, size_t total);
     // change state into "update downloaded"
-    void StateUpdateDownloaded(const std::string& updateFile);
+    void StateUpdateDownloaded(const std::wstring& updateFile);
 
 private:
     void EnablePulsing(bool enable);
@@ -336,16 +419,16 @@ UpdateDialog::UpdateDialog()
 {
     m_heading = new wxStaticText(this, wxID_ANY, "");
     SetHeadingFont(m_heading);
-    m_mainAreaSizer->Add(m_heading, wxSizerFlags(0).Expand().Border(wxBOTTOM, 10));
+    m_mainAreaSizer->Add(m_heading, wxSizerFlags(0).Expand().Border(wxBOTTOM, PX(10)));
 
     m_message = new wxStaticText(this, wxID_ANY, "",
-                                 wxDefaultPosition, wxSize(MESSAGE_AREA_WIDTH, -1));
+                                 wxDefaultPosition, wxSize(PX(MESSAGE_AREA_WIDTH), -1));
     m_mainAreaSizer->Add(m_message, wxSizerFlags(0).Expand());
 
     m_progress = new wxGauge(this, wxID_ANY, 100,
-                             wxDefaultPosition, wxSize(MESSAGE_AREA_WIDTH, 16));
+                             wxDefaultPosition, wxSize(PX(MESSAGE_AREA_WIDTH), PX(16)));
     m_progressLabel = new wxStaticText(this, wxID_ANY, "");
-    m_mainAreaSizer->Add(m_progress, wxSizerFlags(0).Expand().Border(wxTOP|wxBOTTOM, 10));
+    m_mainAreaSizer->Add(m_progress, wxSizerFlags(0).Expand().Border(wxTOP|wxBOTTOM, PX(10)));
     m_mainAreaSizer->Add(m_progressLabel, wxSizerFlags(0).Expand());
     m_mainAreaSizer->AddStretchSpacer(1);
 
@@ -353,16 +436,16 @@ UpdateDialog::UpdateDialog()
 
     wxStaticText *notesLabel = new wxStaticText(this, wxID_ANY, _("Release notes:"));
     SetBoldFont(notesLabel);
-    m_releaseNotesSizer->Add(notesLabel, wxSizerFlags().Border(wxTOP, 10));
+    m_releaseNotesSizer->Add(notesLabel, wxSizerFlags().Border(wxTOP, PX(10)));
 
     m_browserParent = new wxPanel(this, wxID_ANY,
                                   wxDefaultPosition,
-                                  wxSize(RELNOTES_WIDTH, RELNOTES_HEIGHT));
+                                  wxSize(PX(RELNOTES_WIDTH), PX(RELNOTES_HEIGHT)));
     m_browserParent->SetBackgroundColour(*wxWHITE);
     m_releaseNotesSizer->Add
                          (
                              m_browserParent,
-                             wxSizerFlags(1).Expand().Border(wxTOP, 10)
+                             wxSizerFlags(1).Expand().Border(wxTOP, PX(10))
                          );
 
     m_mainAreaSizer->Add
@@ -378,13 +461,13 @@ UpdateDialog::UpdateDialog()
     m_updateButtonsSizer->Add
                           (
                             new wxButton(this, ID_SKIP_VERSION, _("Skip this version")),
-                            wxSizerFlags().Border(wxRIGHT, 20)
+                            wxSizerFlags().Border(wxRIGHT, PX(20))
                           );
     m_updateButtonsSizer->AddStretchSpacer(1);
     m_updateButtonsSizer->Add
                           (
                             new wxButton(this, ID_REMIND_LATER, _("Remind me later")),
-                            wxSizerFlags().Border(wxRIGHT, 10)
+                            wxSizerFlags().Border(wxRIGHT, PX(10))
                           );
     m_updateButtonsSizer->Add
                           (
@@ -409,7 +492,7 @@ UpdateDialog::UpdateDialog()
     m_mainAreaSizer->Add
                  (
                      m_buttonSizer,
-                     wxSizerFlags(0).Expand().Border(wxTOP, 10)
+                     wxSizerFlags(0).Expand().Border(wxTOP, PX(10))
                  );
 
     UpdateLayout();
@@ -479,11 +562,19 @@ void UpdateDialog::OnRemindLater(wxCommandEvent&)
 
 void UpdateDialog::OnInstall(wxCommandEvent&)
 {
-    StateDownloading();
+    if ( !m_appcast.HasDownload() )
+    {
+        wxLaunchDefaultBrowser(m_appcast.WebBrowserURL, wxBROWSER_NEW_WINDOW);
+        Close();
+    }
+    else
+    {
+        StateDownloading();
 
-    // Run the download in background.
-    m_downloader = new UpdateDownloader(m_appcast);
-    m_downloader->Start();
+        // Run the download in background.
+        m_downloader = new UpdateDownloader(m_appcast);
+        m_downloader->Start();
+    }
 }
 
 void UpdateDialog::OnRunInstaller(wxCommandEvent&)
@@ -520,7 +611,7 @@ void UpdateDialog::OnRunInstaller(wxCommandEvent&)
 void UpdateDialog::SetMessage(const wxString& text, int width)
 {
     m_message->SetLabel(text);
-    m_message->Wrap(width);
+    m_message->Wrap(PX(width));
 }
 
 
@@ -632,6 +723,9 @@ void UpdateDialog::StateUpdateAvailable(const Appcast& info)
         m_heading->SetLabel(
             wxString::Format(_("A new version of %s is available!"), appname));
 
+        if ( !info.HasDownload() )
+            m_installButton->SetLabel(_("Get update"));
+
         SetMessage
         (
             wxString::Format
@@ -713,7 +807,7 @@ void UpdateDialog::DownloadProgress(size_t downloaded, size_t total)
 }
 
 
-void UpdateDialog::StateUpdateDownloaded(const std::string& updateFile)
+void UpdateDialog::StateUpdateDownloaded(const std::wstring& updateFile)
 {
     m_downloader->Join();
     delete m_downloader;
@@ -805,19 +899,41 @@ void UpdateDialog::ShowReleaseNotes(const Appcast& info)
             return;
         }
 
-        // Creates a new one-dimensional array
+        // If the code below looks crazy, that's because it is. Apparently,
+        // the document may be in some uninitialized state first time around,
+        // so we need to write an empty string into it first and only then the
+        // real content. (At least that's what wxWebView does...)
+        //
+        // See https://github.com/vslavik/winsparkle/issues/29
         SAFEARRAY *psaStrings = SafeArrayCreateVector(VT_VARIANT, 0, 1);
         if ( psaStrings != NULL )
         {
             VARIANT *param;
             SafeArrayAccessData(psaStrings, (LPVOID*)&param);
             param->vt = VT_BSTR;
-            param->bstrVal = wxBasicString(info.Description);
+            param->bstrVal = SysAllocString(OLESTR(""));
             SafeArrayUnaccessData(psaStrings);
 
             doc->write(psaStrings);
+            doc->close();
 
             SafeArrayDestroy(psaStrings);
+
+            psaStrings = SafeArrayCreateVector(VT_VARIANT, 0, 1);
+            if (psaStrings != NULL)
+            {
+                VARIANT *param;
+                SafeArrayAccessData(psaStrings, (LPVOID*) &param);
+                param->vt = VT_BSTR;
+                param->bstrVal = wxBasicString(wxString::FromUTF8(info.Description.c_str()));
+                SafeArrayUnaccessData(psaStrings);
+
+                doc->write(psaStrings);
+                doc->close();
+
+                SafeArrayDestroy(psaStrings);
+            }
+
             doc->Release();
         }
     }
@@ -843,7 +959,7 @@ AskPermissionDialog::AskPermissionDialog()
             new wxStaticText(this, wxID_ANY,
                              _("Check for updates automatically?"));
     SetHeadingFont(heading);
-    m_mainAreaSizer->Add(heading, wxSizerFlags(0).Expand().Border(wxBOTTOM, 10));
+    m_mainAreaSizer->Add(heading, wxSizerFlags(0).Expand().Border(wxBOTTOM, PX(10)));
 
     wxStaticText *message =
             new wxStaticText
@@ -854,9 +970,9 @@ AskPermissionDialog::AskPermissionDialog()
                         _("Should %s automatically check for updates? You can always check for updates manually from the menu."),
                         Settings::GetAppName()
                     ),
-                    wxDefaultPosition, wxSize(MESSAGE_AREA_WIDTH, -1)
+                    wxDefaultPosition, wxSize(PX(MESSAGE_AREA_WIDTH), -1)
                 );
-    message->Wrap(MESSAGE_AREA_WIDTH);
+    message->Wrap(PX(MESSAGE_AREA_WIDTH));
     m_mainAreaSizer->Add(message, wxSizerFlags(0).Expand());
 
     m_mainAreaSizer->AddStretchSpacer(1);
@@ -876,7 +992,7 @@ AskPermissionDialog::AskPermissionDialog()
     m_mainAreaSizer->Add
                  (
                      buttonSizer,
-                     wxSizerFlags(0).Right().Border(wxTOP, 10)
+                     wxSizerFlags(0).Right().Border(wxTOP, PX(10))
                  );
 
     UpdateLayout();
@@ -1000,6 +1116,8 @@ void App::ShowWindow()
     wxASSERT( m_win );
 
     m_win->Freeze();
+    if (!m_win->IsShown())
+        CenterWindowOnHostApplication(m_win);
     m_win->Show();
     m_win->Thaw();
     m_win->Raise();
@@ -1015,7 +1133,10 @@ void App::OnWindowClose(wxCloseEvent& event)
 
 void App::OnTerminate(wxThreadEvent&)
 {
-    ExitMainLoop();
+    wxEventLoopBase *activeLoop = wxEventLoop::GetActive();
+    if (!activeLoop->IsMain())
+        activeLoop->Exit(wxID_CANCEL);
+    GetMainLoop()->ScheduleExit(0);
 }
 
 
@@ -1221,7 +1342,7 @@ void UI::NotifyDownloadProgress(size_t downloaded, size_t total)
 
 
 /*static*/
-void UI::NotifyUpdateDownloaded(const std::string& updateFile)
+void UI::NotifyUpdateDownloaded(const std::wstring& updateFile)
 {
     UIThreadAccess uit;
     EventPayload payload;
